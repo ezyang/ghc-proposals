@@ -56,7 +56,9 @@ does the following:
    implementation recorded in the unit identity (checking if the
    implementation is sufficient).  The resulting interface file
    simply reexports all of the necessary entities from the
-   implementing module.
+   implementing module. (TODO: Do we really want to require the
+   indefinite unit to be installed to be able to compile? We
+   have all the necessary information!)
 
 2. Once signature are processed, we compile all the modules.
 
@@ -233,16 +235,130 @@ Module``).  This distinction influences GHC in the followng ways:
   Similarly, in ``RnNames`` we check for self-imports using
   identity modules, to allow signatures to import their implementor.
 
+Name substitutions (`NameShape <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/backpack/NameShape.hs>`_)
+~~~~~~~~~~~~~~~~~~~~~
+
+When we write a declaration in a signature, e.g., ``data T``, we
+ascribe to it a **name variable**, e.g., ``{m.T}``.  This
+name variable may be substituted with an actual original
+name when the signature is implemented (or even if we
+merge the signature with one which reexports this entity
+from another module).
+
+When we instantiate a signature ``m`` with a module ``M``,
+we also need to substitute over names.  To do so, we must
+compute the **name substitution** induced by the *exports*
+of the module in question.  A ``NameShape`` represents
+such a name substitution for a single module instantiation.
+The "shape" in the name comes from the fact that the computation
+of a name substitution is essentially the *shaping pass* from
+Backpack'14, but in a far more restricted form.
+
+The name substitution for an export list is easy to explain.  If we are
+filling the module variable ``<m>``, given an export ``N`` of the form
+``M.n`` or ``{m'.n}`` (where ``n`` is an ``OccName``), the induced name
+substitution is from ``{m.n}`` to ``N``.  So, for example, if we have
+``A=impl:B``, and the exports of ``impl:B`` are ``impl:B.f`` and
+``impl:C.g``, then our name substitution is ``{A.f}`` to ``impl:B.f``
+and ``{A.g}`` to ``impl:C.g``.
+
+The name substitution oriented interface for ``NameShape`` looks
+like this::
+
+    emptyNameShape   :: ModuleName -> NameShpe
+    mkNameShape      :: ModuleName -> [AvailInfo] -> NameShape
+    substNameShape   :: NameShape -> Name -> Name
+
+``mkNameShape req_name as`` says, create a name substitution on
+name variables ``{req_name.n}`` for all ``n``, according to the
+exports ``as``.
+
+There is a bit more in ``NameShape`` about merging name shapes,
+but we will come back to that when we discuss signature merging.
+
 Interface renaming (`RnModIface <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/backpack/RnModIface.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+We only ever write out interface files for fully general unit identities
+(indefinite units) or fully instantiated units (definite units).
+However, over the course of typecheck an indefinite unit, we may
+need to read out the interface for a partially instantiated unit
+identifier.  To implement this, when we request an interface
+at a unit identifier, we read the interface for the generalized
+unit identifier (guaranteed to exist), and then *rename* it
+according to the module substitution in the unit identifier.
+Renaming a ``ModIface`` is implemented by ``rnModIface``
+in RnModIface.
 
+Interface renaming proceeds functorially on all occurrences of ``Name``
+in ``ModIface``; ``rnIfaceGlobal`` is the workhorse.  The complexity
+of this function stems two facts:
 
-RnModIface
-~~~~~~~~~~
+1. Morally (for example, we describe name substitutions in our ICFP'16
+   submission in this way), the module variable substitution *induce*
+   a name variable substitution.  We could go ahead and calculate the
+   name variable substitution ahead of time. However, this is wasteful
+   if there aren't actually occurrences of a those name variables in
+   the interface.  So we don't actually go and find out what the name
+   substitution for a ``ModIface`` is until we actually encounter
+   a name variable.
 
-NameShape
-~~~~~~~~~~
+2. There are a two cases where we cannot read the name variable
+   substitution directly off of the module substitution.
+
+   The first case is when we are computing the shape of a
+   signature prior to merging.  In this case, we might
+   need to get the exports of a module ``p[H=himpl:H,A=<B>]:A``.
+   ``H=himpl:H`` induces a name substitution on occurrences of
+   ``<H>``, but ``A=<B>`` is undefined at this point, since
+   we're trying to figure out what the correct exports of ``<B>``
+   are going to be!
+
+   The second case is after we have computed the shape of
+   a signature we are merging, we need to feed in the correct
+   name substitution, rather than load the (non-existent)
+   interface for the signature we are type checking.
+
+The algorithm for renaming an original name ``N`` handles all
+of these cases as follows:
+
+1. If we are renaming a signature to an indefinite module
+   identity (this only occurs if we are about to merge it to form the
+   local merged signature), the corresponding module substitution
+   is guaranteed to have the form ``m=<m'>``.  For a
+   name of form ``{m.n}``, we first rename it to ``{m'.n}``,
+   and then apply the provided name substitution ``sh_if_shape ::
+   NameShape``, if it is provided.
+
+2. For any name of the form ``M.n`` (i.e., not a name variable),
+   it is sufficient to apply the module variable substitution to ``M``.
+
+3. Otherwise, for ``{m.n}`` with a substitution from ``m=M``,
+   compute the ``NameShape`` from the exports of ``M`` and
+   apply it to the name.  (TODO: We never actually construct
+   the ``NameShape``; maybe we should!)
+
+The precondition for interface renaming is that the domain of all name
+substitutions must cover all of the name variables that actually
+occur in the interface.  For unit identities which occur from
+interface files, this precondition is already fulfilled; however,
+user specified unit identities (via ``-unit-id``) can violate this
+invariant.  Thus, ``checkImplements`` in TcBackpack ensures this invariant is
+upheld (it is called by ``checkUnitId`` and ``instantiateSignature``).
+(To be discussed later.)
+
+Note that renaming on ``ModIface`` is necessarily incomplete: top-level
+declarations in a ``ModIface`` are identified only by ``OccName``
+and cannot be substituted. There is one last renaming step that occurs
+when typechecking the interface (to be discussed later) for handling
+these top level identifiers.
+
+Given that interface typechecking must do renaming as well, why can't
+renaming be deferred to typechecking entirely?  Immediate renaming
+is extremely useful when merging signatures (to be discussed later),
+where we must rename and merge interfaces with different instantiations
+prior to typechecking. This algorithm would be very confusing if we
+hadn't renamed by then.
 
 Pretty-printing
 ~~~~~~~~~~~~~~~
