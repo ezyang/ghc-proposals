@@ -22,6 +22,52 @@ GHC
 The most recent patchset for GHC with Backpack is located at
 the `ghc-backpack branch on ezyang/ghc <https://github.com/ezyang/ghc/tree/ghc-backpack>`_.
 
+Overview
+~~~~~~~~
+
+To typecheck an indefinite Backpack unit, GHC performs the following steps:
+
+1. For each required signature, we typecheck the local ``hsig``
+   file, and then merge the resulting interface with all of the
+   inherited requirements of the dependencies at this module name.
+   The resulting interface file produced for this module name records
+   the *fully merged* signature (i.e., if you fulfill this signature,
+   you will fulfill the local signature as well as all of the
+   dependencies which this signature inherits from.)
+
+2. Once signatures are processed, we typecheck all the modules.
+
+Prior to typechecking a module or signature, we check that every
+dependency that may be used by this module/signature is well-typed
+(i.e., that our local merged signatures and other instantiating modules
+match the requirements of the dependency.)
+
+Typechecking produces a set of interface files for the fully generalized
+unit identity of this unit, which the client installs to the installed
+unit database as an entry for an indefinite unit.
+
+To compile an definite Backpack unit for some definite unit identity we
+assume that all of the appropriately instantiated dependencies have
+already been compiled and installed to the package database.  Then GHC
+does the following:
+
+1. For each required signature, we read in the merged signature from
+   the corresponding indefinite unit id, and instantiate it with the
+   implementation recorded in the unit identity (checking if the
+   implementation is sufficient).  The resulting interface file
+   simply reexports all of the necessary entities from the
+   implementing module.
+
+2. Once signature are processed, we compile all the modules.
+
+The resulting object files and interfaces are then to be installed
+by the client to the installed unit database as an entry for a definite
+unit.
+
+We never install partially instantiated units to the installed unit
+database; they are either indefinite units in most general form, or
+fully instantiated definite units.
+
 Identifiers (`Module <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/basicTypes/Module.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -186,6 +232,11 @@ Module``).  This distinction influences GHC in the followng ways:
   in the *current* unit being compiled.  (See LoadIface.)
   Similarly, in ``RnNames`` we check for self-imports using
   identity modules, to allow signatures to import their implementor.
+
+Interface renaming (`RnModIface <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/backpack/RnModIface.hs>`_)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
 
 RnModIface
 ~~~~~~~~~~
