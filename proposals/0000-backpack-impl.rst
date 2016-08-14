@@ -1,0 +1,161 @@
+.. proposal-number:: Leave blank. This will be filled in when the proposal is
+                     accepted.
+
+.. trac-ticket:: Leave blank. This will eventually be filled with the Trac
+                 ticket number which will track the progress of the
+                 implementation of the feature.
+
+.. implemented:: Leave blank. This will be filled in with the first GHC version which
+                 implements the described feature.
+
+Backpack (implementation)
+=========================
+
+This is a companion document to the `Backpack
+<https://github.com/ezyang/ghc-proposals/blob/backpack/proposals/0000-backpack.rst>`_
+proposal describing how backpack is implemented in GHC, Cabal, and
+cabal-install.
+
+GHC
+---
+
+The most recent patchset for GHC with Backpack is located at
+the `ghc-backpack branch on ezyang/ghc <https://github.com/ezyang/ghc/tree/ghc-backpack>`_.
+
+Identifiers
+~~~~~~~~~~~
+
+In this section, we describe the core data types which represent
+unit identifiers and module identifiers in GHC::
+
+    newtype ComponentId = ComponentId FastString
+    type ShFreeHoles = UniqDSet ModuleName
+    data UnitId = UnitId {
+            unitIdFS          :: FastString,
+            unitIdKey         :: Unique,
+            unitIdComponentId :: ComponentId,
+            unitIdInsts       :: [(ModuleName, Module)],
+            unitIdFreeHoles   :: ShFreeHoles
+        }
+    data Module = Module {
+            moduleUnitId :: UnitId,
+            moduleName   :: ModuleName
+        }
+
+These types closely resemble their semantic counterparts, except for one
+difference: there is no distinct ADT representing module variables.
+Instead, module variables are representing using a distinguished
+``hole`` unit identifier ``holeUnitId``.  This is mostly for backwards
+compatibility in GHC, as ``moduleUnitId`` is used pervasively throughout
+the compiler (and adding an extra case for module variables would
+necessarily make this function partial.)
+
+Some other things to note about the representation:
+
+* A string representation of a ``UnitId`` (``unitIdFS``) is needed to be
+  used for symbol names.  We generate this string representation by
+  recursively hashing the contents of a ``UnitId`` (the hashes of sub
+  ``UnitId``\s is hashed Merkel tree style):  this algorithm implemented
+  by ``hashUnitId``.
+
+* We also need a ``Unique`` (``unitIdKey``) to support fast equality.
+  We derive the ``Unique`` from the string representation
+  (``unitIdFS``).
+
+* We cache the free module variables (``unitIdFreeHoles``) since we
+  frequently need to consult this field, and would like to avoid
+  having to walk the entire ``UnitId`` structure to find it.
+
+Alternative designs:
+
+Directly allocate uniques for unit identifiers
+    To compute the ``Unique`` for a ``UnitId``, we have to hash
+    the unit identifier and then intern that string.  We could intern
+    unit identifiers more directly by recording them in a trie
+    (ala ``TrieMap``).  However, it's unclear if this would be a
+    performance win.
+
+Defer hashing to Cabal
+    Cabal must also be able to hash a ``UnitId`` into a flat string,
+    which it uses for file system paths.  In the current implementation,
+    Cabal and GHC implement these hashing algorithms separately, so
+    there is not necessarily any correspondence between Cabal's hash
+    and GHC's hash.  An alternative design would be to request Cabal
+    to allocate a hash for every definite unit which it compiles
+    (e.g., through a flag ``-this-unit-id-hash``).  Occurrences of
+    unit identifiers in definite units in the installed unit database
+    would be obligated to also record this hash.
+
+    Unfortunately, even under this scheme, it is still necessary to
+    allocate uniques to indefinite unit identifiers in GHC, which
+    is probably most conveniently done in the current scheme.
+    In particular, for any equality test on unit identifiers, where
+    one unit identifier is not associated with an external hash,
+    it would be necessary to do the comparison through GHC-computed
+    uniques.  However, when testing for equality over unit identities
+    equipped with hashes, we can short-circuit this logic.
+
+Flattened unit identifiers
+    The current design represents ``UnitId``\s as a tree data structure
+    in all situations.  It would be nice to avoid loading these trees
+    into memory when they are not necessary, e.g., when compiling
+    a definite library (where we do not ever need to perform
+    substitutions over the unit identifier.)
+
+    However, a similar difficulty arises to deferred hashing: what
+    if we need to compare an abbreviated unit identifier with a full
+    one.  There are a few ways to solve this problem:
+
+    1. If we deleted the hash entirely, we will need to consult
+       the installed unit database to get the expanded form of the
+       unit identifier.
+
+    2. Another strategy is to load the tree structure
+       *lazily*; if we never inspect the structure of a unit identifier,
+       we avoid parsing the tree into memory (though we would still pay
+       the cost of holding onto the unparsed string in case we *do*
+       need to parse it.)
+
+    3. A third strategy is to check if we are building a definite
+       library or typechecking an indefinite library when loading
+       the package database.  If we are building a definite library,
+       we simply skip parsing the tree structure.
+
+RnModIface
+~~~~~~~~~~
+
+NameShape
+~~~~~~~~~~
+
+Proposed Change
+---------------
+
+Here you should describe in precise terms what the proposal seeks to change.
+This should cover several things,
+
+* define the grammar and semantics of any new syntactic constructs
+* define the interfaces for any new library interfaces
+* discuss how the change addresses the points raised in the Motivation section
+* discuss how the proposed approach might interact with existing features  
+
+Note, however, that this section need not (but may) describe details of the
+implementation of the feature. The proposal is merely intended to describe what
+the new feature is and how it should behave.
+
+Drawbacks
+---------
+
+What are the reasons for *not* adopting the proposed change. These might include
+complicating the language grammar, poor interactions with other features, 
+
+Alternatives
+------------
+
+Here is where you can describe possible variants to the approach described in
+the Proposed Change section.
+
+Unresolved Questions
+--------------------
+
+Are there any parts of the design that are still unclear? Hopefully this section
+will be empty by the time the proposal is brought up for a final decision.
