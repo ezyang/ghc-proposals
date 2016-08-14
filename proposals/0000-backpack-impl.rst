@@ -22,7 +22,7 @@ GHC
 The most recent patchset for GHC with Backpack is located at
 the `ghc-backpack branch on ezyang/ghc <https://github.com/ezyang/ghc/tree/ghc-backpack>`_.
 
-Identifiers (``basicTypes/Module.hs``)
+Identifiers (`Module <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/basicTypes/Module.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 In this section, we describe the core data types which represent
