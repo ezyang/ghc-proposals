@@ -56,7 +56,7 @@ to the ``Name`` constructor.
 This punning requires some care when defining substitutions on
 module variables.  Module variables get two substituting functions
 which should not be called on ``nameModule`` (except in special
-circumstances involving signature merging):
+circumstances involving signature merging)::
 
     renameHoleModule :: ShHoleSubst -> Module -> Module
     renameHoleUnitId :: ShHoleSusbt -> UnitId -> UnitId
