@@ -49,7 +49,20 @@ Instead, module variables are representing using a distinguished
 ``hole`` unit identifier ``holeUnitId``.  This is mostly for backwards
 compatibility in GHC, as ``moduleUnitId`` is used pervasively throughout
 the compiler (and adding an extra case for module variables would
-necessarily make this function partial.)
+necessarily make this function partial.)  Similarly, name variables
+``{m.n}`` are represented as ``<m>.n`` to avoid adding another case
+to the ``Name`` constructor.
+
+This punning requires some care when defining substitutions on
+module variables.  Module variables get two substituting functions
+which should not be called on ``nameModule`` (except in special
+circumstances involving signature merging):
+
+    renameHoleModule :: ShHoleSubst -> Module -> Module
+    renameHoleUnitId :: ShHoleSusbt -> UnitId -> UnitId
+
+Name substitutions are handled by ``NameShape``, discussed in
+a different section.
 
 Some other things to note about the representation:
 
@@ -87,25 +100,23 @@ Defer hashing to Cabal
     unit identifiers in definite units in the installed unit database
     would be obligated to also record this hash.
 
-    Unfortunately, even under this scheme, it is still necessary to
-    allocate uniques to indefinite unit identifiers in GHC, which
-    is probably most conveniently done in the current scheme.
-    In particular, for any equality test on unit identifiers, where
-    one unit identifier is not associated with an external hash,
-    it would be necessary to do the comparison through GHC-computed
-    uniques.  However, when testing for equality over unit identities
-    equipped with hashes, we can short-circuit this logic.
+    Unfortunately, even under this scheme, Cabal's provided hash cannot be
+    used to allocate uniques for equality testing: what if we check
+    for equality between an identifier equipped with a hash, and one
+    without it?  See below for more on how to avoid this problem.
 
 Flattened unit identifiers
     The current design represents ``UnitId``\s as a tree data structure
     in all situations.  It would be nice to avoid loading these trees
     into memory when they are not necessary, e.g., when compiling
     a definite library (where we do not ever need to perform
-    substitutions over the unit identifier.)
+    substitutions over the unit identifier); in those cases, we
+    simply use the ``Unique`` from the abbreviated unit identifier
+    string.
 
     However, a similar difficulty arises to deferred hashing: what
     if we need to compare an abbreviated unit identifier with a full
-    one.  There are a few ways to solve this problem:
+    one.  Here are two non-solutions:
 
     1. If we deleted the hash entirely, we will need to consult
        the installed unit database to get the expanded form of the
@@ -117,10 +128,64 @@ Flattened unit identifiers
        the cost of holding onto the unparsed string in case we *do*
        need to parse it.)
 
-    3. A third strategy is to check if we are building a definite
-       library or typechecking an indefinite library when loading
-       the package database.  If we are building a definite library,
-       we simply skip parsing the tree structure.
+    Neither of these strategies work because we need to immediately
+    generate uniques for unit identifiers, before we know if we
+    are going to compare them to their abbreviated or un-abbreviated
+    versions.
+
+    A more promising approach is to *guarantee* that all unit
+    identifiers handled by GHC are either entirely abbreviated,
+    or entirely expanded.  Thus, when we read in interface files
+    or the unit database, we must know if we are compiling
+    a definite library or typechecking an indefinite library.
+    When compiling a definite library, extreme care must be
+    taken when handling interfaces from indefinite libraries.
+    This has consequences for how we implement signature
+    instantiation.
+
+Identity modules versus semantic modules
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Suppose that we typecheck the signature file ``A.hsig``, inside the unit
+``p[A=<A>]``.  What is its *module identity*?  There are two possible
+ways to answer this question:
+
+1. We might say that its module identity is ``p[A=<A>]:A``, since
+   module identities for modules are computed by combining the
+   current unit identity with the name of the module.  Indeed,
+   this module identity uniquely *identifies* the ``A.hi`` produced
+   by typechecking ``A.hsig``, thus we call it the **identity module**.
+
+2. Alternately, we might say its module identity is ``<A>``, since
+   any entity ``T`` which is declared in this signature should be given
+   the original name ``<A>.T`` (recall that by punning, this is really
+   the name variable ``{A.T}``).  Since this identity is what would be
+   used to compute the original names of entities declared in the
+   signature, we call this the **semantic module**.
+
+A semantic module can be computed from an identity module by
+a process called **canonicalization** (``canonicalizeModule :: Module ->
+Module``).  This distinction influences GHC in the followng ways:
+
+* In the desugarer and later phases of the compilation
+  pipeline, we can assume semantic and identity modules
+  are always the same, since we never compile signatures (to
+  appease the build system, we generate blank object files,
+  but this is done simply by building a blank stub C file.)
+
+* For any code that involves ``Name``\s, we obviously want
+  the semantic module when computing the name.  Examples
+  include ``lookupIfaceTop`` in IfaceEnv, ``mkIface`` and
+  ``addFingerprints`` in MkIface and ``tcLookupGlobal`` in
+  TcEnv.
+
+* When reading interfaces, we want the identity module to
+  identify the specific interface we want (such interfaces
+  should never be loaded into the EPS).  However, if a
+  hole module ``<A>`` is requested, we look for ``A.hi``
+  in the *current* unit being compiled.  (See LoadIface.)
+  Similarly, in ``RnNames`` we check for self-imports using
+  identity modules, to allow signatures to import their implementor.
 
 RnModIface
 ~~~~~~~~~~
