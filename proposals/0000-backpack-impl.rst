@@ -22,8 +22,8 @@ GHC
 The most recent patchset for GHC with Backpack is located at
 the `ghc-backpack branch on ezyang/ghc <https://github.com/ezyang/ghc/tree/ghc-backpack>`_.
 
-Identifiers
-~~~~~~~~~~~
+Identifiers (``basicTypes/Module.hs``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 In this section, we describe the core data types which represent
 unit identifiers and module identifiers in GHC::
