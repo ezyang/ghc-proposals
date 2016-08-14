@@ -25,8 +25,9 @@ the `ghc-backpack branch on ezyang/ghc <https://github.com/ezyang/ghc/tree/ghc-b
 Identifiers (`Module <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/basicTypes/Module.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In this section, we describe the core data types which represent
-unit identifiers and module identifiers in GHC::
+The core data types which represent unit identifiers and module
+identifiers in GHC have been adjusted to encode the extra structure
+imposed by Backpack::
 
     newtype ComponentId = ComponentId FastString
     type ShFreeHoles = UniqDSet ModuleName
@@ -42,7 +43,7 @@ unit identifiers and module identifiers in GHC::
             moduleName   :: ModuleName
         }
 
-These types closely resemble their semantic counterparts, except for one
+These types closely resemble their `semantic counterparts <https://github.com/ezyang/ghc-proposals/blob/backpack/proposals/0000-backpack.rst#identifiers>`_, except for one
 difference: there is no distinct ADT representing module variables.
 Instead, module variables are representing using a distinguished
 ``hole`` unit identifier ``holeUnitId``.  This is mostly for backwards
@@ -126,6 +127,30 @@ RnModIface
 
 NameShape
 ~~~~~~~~~~
+
+Pretty-printing
+~~~~~~~~~~~~~~~
+
+I experimented with various pretty-printing schemes, for both debugging
+output and user-visible output.  The current printing scheme coincides
+closely with our ICFP'16 submission:
+
+* Names pretty-print as ``M.n``, unless ``M`` is a hole module ``<m>``,
+  in which case they pretty-print as ``{m.n}``, UNLESS the name would
+  be printed unqualified (in which case it just prints as ``n``.)
+  (``pprExternal`` in Name)
+
+* Unit identifiers pretty-print according to their `grammar <https://github.com/ezyang/ghc-proposals/blob/backpack/proposals/0000-backpack.rst#identifiers>`_,
+  however, in some circumstances, GHC will *abbreviate* the
+  instantiation.  Entries in the module substitution are elided
+  if (1) we would *not* have qualified the module name, and (2)
+  the requirement name and the module name agree.  These cases
+  typically indicate that the "default" instantiation was carried
+  out.  The full unit identity can be printed using ``-dppr-debug``.
+  (``pprUnitId`` in Module)
+
+* Module variables, if they would be qualified, are pretty
+  printed as ``<m>``. (``pprModule`` in Module)
 
 Proposed Change
 ---------------
