@@ -109,9 +109,6 @@ circumstances involving signature merging)::
     renameHoleModule :: ShHoleSubst -> Module -> Module
     renameHoleUnitId :: ShHoleSusbt -> UnitId -> UnitId
 
-Name substitutions are handled by ``NameShape``, discussed in
-a different section.
-
 Some other things to note about the representation:
 
 * A string representation of a ``UnitId`` (``unitIdFS``) is needed to be
@@ -213,7 +210,7 @@ ways to answer this question:
 
 A semantic module can be computed from an identity module by
 a process called **canonicalization** (``canonicalizeModule :: Module ->
-Module``).  This distinction influences GHC in the followng ways:
+Module``).  This distinction influences GHC in the following ways:
 
 * In the desugarer and later phases of the compilation
   pipeline, we can assume semantic and identity modules
@@ -298,7 +295,7 @@ of this function stems two facts:
    submission in this way), the module variable substitution *induce*
    a name variable substitution.  We could go ahead and calculate the
    name variable substitution ahead of time. However, this is wasteful
-   if there aren't actually occurrences of a those name variables in
+   if there aren't actually occurrences of any of those name variables in
    the interface.  So we don't actually go and find out what the name
    substitution for a ``ModIface`` is until we actually encounter
    a name variable.
@@ -323,7 +320,7 @@ The algorithm for renaming an original name ``N`` handles all
 of these cases as follows:
 
 1. If we are renaming a signature to an indefinite module
-   identity (this only occurs if we are about to merge it to form the
+   identity (this only occurs if we are about to merge it into the
    local merged signature), the corresponding module substitution
    is guaranteed to have the form ``m=<m'>``.  For a
    name of form ``{m.n}``, we first rename it to ``{m'.n}``,
@@ -359,6 +356,98 @@ is extremely useful when merging signatures (to be discussed later),
 where we must rename and merge interfaces with different instantiations
 prior to typechecking. This algorithm would be very confusing if we
 hadn't renamed by then.
+
+Typechecking interfaces (IfaceEnv)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Loading interfaces (LoadIface)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Signature merging (mergeSignatures in TcBackpack, typecheckIfacesForMerging in TcIface)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Before reading this section, make sure you are familiar with
+GHC's use of `knot-tying <https://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/TyingTheKnot>`_.
+
+Merging signatures is subtle business, because it interferes
+with how GHC does knot tying.  Consider these two signatures,
+which we would like to merge::
+
+    -- first signature
+    signature A where
+        data T
+        x :: T
+
+    -- second signature
+    signature A where
+        type T = Bool
+        x :: Bool
+
+When we typechecked these signatures individually, we formed
+a graph for each of them; in particular, the type of ``x`` from
+the first signature points to the *abstract* type constructor
+``data T``.  If we directly compare these two graphs for
+compatibility, we will not observe that this abstract type has
+already been refined into ``Bool``.
+
+As it turns out, this problem is solvable, by clever application
+of knot tying.  Here's how we merge these signatures:
+
+1. First, we syntactically merge all of the entities of the
+   signatures, and then typecheck the merged ``IfaceDecl`` into a graph
+   representation.  We call this the *merged type environment*.
+   In the example above, this type environment might
+   be::
+
+        signature A where
+            type T = Bool -- type is more precise than abstract data
+            x :: T        -- arbitrarily picked first type
+
+   There is no guarantee that this graph is well-typed or
+   even well-kinded; it simply serves as a type computation
+   pass (ala RMC).
+
+2. Next, we typecheck each individual signature ``ModIface``,
+   resolving all name references *to* the graph entities
+   we computed in (1).  Thus, ``x :: T`` in the first
+   signature gets compiled to a type with a pointer not
+   to ``data T``, but ``type T = Bool`` from the merged
+   environment.  This gives us a series of graph that look
+   like this::
+
+       .            +--------------+
+              +---> |  merged env  | <---+
+              |     +--------------+     |
+              |                          |
+       +------+------+            +------+------+
+       | signature 1 |            | signature 2 |
+       +-------------+            +-------------+
+
+   Or with the individual entities in view::
+
+       .               +--> type T = Bool  (merged env)
+                       |    x :: o--\
+                       +------------/
+        (sig 1)        |                    (sig 2)
+        data T         |                    type T = Bool
+        x :: o---------+                    x :: Bool
+
+3. Finally, for each signature, we compare each typechecked
+   entity it declares with the corresponding entity
+   from the *merged* type environment.  Now we can see that
+   the merged ``x`` has the same type as the ``x`` from
+   signature 2, since the merged ``x`` has a type synonym
+   which unfolds to ``Bool``; in fact, *all* declarations
+   of ``x`` now see the unfolding.
+
+The initial syntactic merge motivates why renaming cannot
+happen on the fly during interface typechecking: we can't
+do a syntactic merge on signatures until after they have
+been renamed.
+
+
+Recompilation checking (Desugar, MkIface)
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Pretty-printing
 ~~~~~~~~~~~~~~~
