@@ -476,6 +476,20 @@ Beyond this, there are three other things of note in ``LoadIface``:
 Typechecking interfaces (IfaceEnv)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+As mentioned previously, interface renaming is incomplete because
+it cannot modify top-level ``OccName``\s for declarations.
+``lookupIfaceTop`` picks up the slack, renaming these according
+to the computed exports of the module (``if_nsubst``).
+
+There is a hack for ``DFun``\s from signatures, because implementations
+are currently compiled separately from signatures, so there is
+never an impedance matching binding for a ``DFun`` to the name
+that the signature provides.  At the moment, we just rename
+it to something silly, with the knowledge that it will get
+dropped subsequently when we merge the signature.  I don't
+understand what is going on with ``DFun``\s too well and it would be
+good to work out.
+
 Signature merging (mergeSignatures in TcBackpack, typecheckIfacesForMerging in TcIface)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
