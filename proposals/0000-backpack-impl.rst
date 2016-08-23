@@ -558,6 +558,68 @@ happen on the fly during interface typechecking: we can't
 do a syntactic merge on signatures until after they have
 been renamed.
 
+There is a **precondition for signature merging**: for
+each signature participating in the merge (including the
+locally defined one), the *precise free module variables*
+(defined in ``LoadIface``) must be typechecked and available
+locally.  Requiring all free module variables to be
+available is too much::
+
+    library p
+        signature A where
+        signature B where
+            import A
+
+The free module variables of ``A`` in ``p`` are ``A``
+and ``B`` (since the identity module for this signature
+is ``p[A=<A>,B=<B>]:A``, but clearly ``B.hi`` is not
+necessary to give meaning to ``A``.
+
+The driver (not implemented)
+~~~~~~~~~~~~~~~~~~~~~
+
+In interface loading and signature merging, we stated that
+there are some nontrivial preconditions that must hold for
+these operations to be valid.  The job of the driver is
+to ensure that these preconditions indeed do hold.  There
+are two primary things it needs to do:
+
+1. First, it has to make sure that signatures are merged
+   in the *correct order*, so that the signature merge
+   preconditions are upheld.
+
+2. Second, it has to check that dependencies are well-typed
+   (as soon as possible, since we have to wait until all
+   the local merged signature for each hole module is ready
+   before we check for well-typedness), so that interface
+   loading is upheld.
+
+These two operations must be interleaved: we can see the
+necessity for this in the following example::
+
+    library p
+        signature H1 where
+            data T
+        signature H2 where
+            import H1
+            data S = MkS T
+
+    library h2impl
+        module H2 where
+            data S = MkS Int
+
+Clearly, ``p[H1=<H1>,H2=h2impl:H2]`` should not be considered
+well-type, as there is no reason to believe that the abstract
+type ``T`` is actually an integer.  But if we consider this
+dependency in the following context:
+
+    library q
+        signature H1 where
+            type T = Int
+        dependency p[H1=<H1>,H2=h2impl:H2]
+
+Once we merge signature ``H1``, ``T`` is refined to ``Int`` and
+we know the instantiation should succeed.
 
 Recompilation checking (Desugar, MkIface)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
