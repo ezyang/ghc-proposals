@@ -197,7 +197,7 @@ Defer hashing to Cabal
     for equality between an identifier equipped with a hash, and one
     without it?  See below for more on how to avoid this problem.
 
-Flattened unit identifiers
+Hashed unit identifiers
     The current design represents ``UnitId``\s as a tree data structure
     in all situations.  It would be nice to avoid loading these trees
     into memory when they are not necessary, e.g., when compiling
@@ -208,32 +208,12 @@ Flattened unit identifiers
 
     However, a similar difficulty arises to deferred hashing: what
     if we need to compare an abbreviated unit identifier with a full
-    one.  Here are two non-solutions:
-
-    1. If we deleted the hash entirely, we will need to consult
-       the installed unit database to get the expanded form of the
-       unit identifier.
-
-    2. Another strategy is to load the tree structure
-       *lazily*; if we never inspect the structure of a unit identifier,
-       we avoid parsing the tree into memory (though we would still pay
-       the cost of holding onto the unparsed string in case we *do*
-       need to parse it.)
-
-    Neither of these strategies work because we need to immediately
-    generate uniques for unit identifiers, before we know if we
-    are going to compare them to their abbreviated or un-abbreviated
-    versions.
-
-    A more promising approach is to *guarantee* that all unit
-    identifiers handled by GHC are either entirely abbreviated,
-    or entirely expanded.  Thus, when we read in interface files
-    or the unit database, we must know if we are compiling
-    a definite library or typechecking an indefinite library.
-    When compiling a definite library, extreme care must be
-    taken when handling interfaces from indefinite libraries.
-    This has consequences for how we implement signature
-    instantiation.
+    one.  The solution is to always consult the package database
+    to promote instantiated unit identifiers into their hashed
+    representation, when a substitution over unit identifiers
+    is performed.  This substitution must be done even when
+    typechecking uninstantiated libraries, since a hashed unit
+    identifier may be mentioned by one of our definite dependencies.
 
 Identity modules versus semantic modules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
