@@ -25,50 +25,97 @@ the `ghc-backpack branch on ezyang/ghc <https://github.com/ezyang/ghc/tree/ghc-b
 Overview
 ~~~~~~~~
 
-To typecheck an indefinite Backpack unit, GHC performs the following steps:
+At a high level, there are two modes GHC can run in:
 
-1. For each required signature, we typecheck the local ``hsig``
-   file, and then merge the resulting interface with all of the
-   inherited requirements of the dependencies at this module name.
-   The resulting interface file produced for this module name records
-   the *fully merged* signature (i.e., if you fulfill this signature,
-   you will fulfill the local signature as well as all of the
-   dependencies which this signature inherits from.)
+1. It can **typecheck an uninstantiated library**, during which
+   it first typechecks some unimplemented signatures, which
+   we then typecheck the rest of the modules (and libraries)
+   against.
 
-2. Once signatures are processed, we typecheck all the modules.
+2. It can **compile an instantiated library**, during which
+   it compiles modules against a known set of implementations
+   (specified by the instantiation.)
 
-Prior to typechecking a module or signature, we check that every
-dependency that may be used by this module/signature is well-typed
-(i.e., that our local merged signatures and other instantiating modules
-match the requirements of the dependency.)
+Before typechecking an uninstantiated library, we must fulfill
+the following precondition:
 
-Typechecking produces a set of interface files for the fully generalized
-unit identity of this unit, which the client installs to the installed
-unit database as an entry for an indefinite unit.
+* Every dependency on a definite library must be compiled
+  and registered in the installed
+  library database.
 
-To compile an definite Backpack unit for some definite unit identity we
-assume that all of the appropriately instantiated dependencies have
-already been compiled and installed to the package database.  Then GHC
-does the following:
+* Every dependency on an indefinite library (even if it is
+  fully instantiated) must be have been typechecked as a fully
+  uninstantiated library (we never typecheck partially instantiated
+  libraries; instead, their interfaces are computed on-the-fly) and
+  registered as an uninstantiated, indefinite library in the installed
+  library database.
 
-1. For each required signature, we read in the merged signature from
-   the corresponding indefinite unit id, and instantiate it with the
-   implementation recorded in the unit identity (checking if the
-   implementation is sufficient).  The resulting interface file
-   simply reexports all of the necessary entities from the
-   implementing module. (TODO: Do we really want to require the
-   indefinite unit to be installed to be able to compile? We
-   have all the necessary information!)
+Given that these hold, to typecheck an uninstantiated library GHC must
+first typecheck the signatures and dependencies.  This is a fairly major
+operation (which we will describe in more detail later), but at the end
+we have the following guarantees:
 
-2. Once signature are processed, we compile all the modules.
+* Every required signature of the library being typechecked has
+  an ``hi`` interface file written for it.  (Thus, the process of
+  type checking an import of a signature in a module works *exactly* the
+  same way as an import of a module.)
 
-The resulting object files and interfaces are then to be installed
-by the client to the installed unit database as an entry for a definite
-unit.
+* Every dependency has been verified to be well-typed, in the sense
+  that the implementation of every requirement (possibly containing references
+  to the local required signatures of our library, think
+  ``-unit-id p[A=<A>]``) *matches* the required signature of the
+  dependency (in the sense described in the Backpack specification
+  of signatures.)
 
-We never install partially instantiated units to the installed unit
-database; they are either indefinite units in most general form, or
-fully instantiated definite units.
+At the end of typechecking all signatures and modules in an
+uninstantiated, indefinite library, we install these interfaces so that
+they can be used to help typecheck other indefinite libraries.
+
+Compiling an instantiated library is a much simpler matter. Given that:
+
+* Every instantiated dependency has been compiled and registered
+  in the installed library database.
+
+* The uninstantiated version of the library *we are instantiating*
+  has been typechecked and registered in the installed library database.
+
+Then GHC simply verifies that the implementations fulfill the
+required signatures of the package (read off from the uninstantiated
+version), writes out a trivial ``hi`` file which simply reexports
+all of the necessary entities, and then compiles the rest of the modules
+as normal.
+
+The details of how this is all done are the subject of the rest
+of this document.
+
+Alternate designs:
+
+Don't require the indefinite library to have been typechecked before compiling it
+    One observation you could make about Backpack is that the
+    typechecking products of an indefinite library aren't really used
+    for anything, besides checking that the implementations really do
+    match the required signatures.  Since these products are not used
+    in an essential way, one might seek to avoid requiring a user to
+    have typechecked and registered the uninstantiated variant of
+    a package.
+
+    For a period of time, our implementation did precisely this. It is
+    only necessary, when compiling, to retypecheck and remerge the
+    ``hsig`` to generate the necessary ``hi`` files for compiling
+    the rest of the modules.  This leads to some extra complexity
+    in the renamer of GHC.
+
+    However, one could reasonably say that uninstantiated libraries
+    would play an essential role in compiling mutually recursive libraries
+    (since we need to typecheck and build against *something* to break
+    the loop), so it is not a big deal to require it always.
+
+Compile instantiated dependencies on indefinite libraries?
+    A reasonable, stronger precondition to typechecking an indefinite
+    library is to require all fully instantiated dependencies to
+    be compiled.  GHC would not derive much benefit from this
+    precondition, except that it could avoid renaming interfaces
+    on the fly in some cases; thus, I opted for the weaker precondition.
 
 Identifiers (`Module <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/basicTypes/Module.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
