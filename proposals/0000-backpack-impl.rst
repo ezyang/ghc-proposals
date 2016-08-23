@@ -323,16 +323,15 @@ but we will come back to that when we discuss signature merging.
 Interface renaming (`RnModIface <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/backpack/RnModIface.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-We only ever write out interface files for fully general unit identities
-(indefinite units) or fully instantiated units (definite units).
-However, over the course of typecheck an indefinite unit, we may
-need to read out the interface for a partially instantiated unit
-identifier.  To implement this, when we request an interface
-at a unit identifier, we read the interface for the generalized
-unit identifier (guaranteed to exist), and then *rename* it
-according to the module substitution in the unit identifier.
-Renaming a ``ModIface`` is implemented by ``rnModIface``
-in RnModIface.
+We only ever write out interface files for uninstantiated unit
+identities or fully instantiated units identities.  However, over the
+course of typecheck an indefinite unit, we may need to read out the
+interface for a partially instantiated unit identifier.  To implement
+this, when we request an interface at a unit identifier, we read the
+interface for the generalized unit identifier (guaranteed to exist), and
+then *rename* it according to the module substitution in the unit
+identifier.  Renaming a ``ModIface`` is implemented by ``rnModIface`` in
+RnModIface.
 
 Interface renaming proceeds functorially on all occurrences of ``Name``
 in ``ModIface``; ``rnIfaceGlobal`` is the workhorse.  The complexity
@@ -382,7 +381,7 @@ of these cases as follows:
    apply it to the name.  (TODO: We never actually construct
    the ``NameShape``; maybe we should!)
 
-The precondition for interface renaming is that the domain of all name
+The **precondition for interface renaming** is that the domain of all name
 substitutions must cover all of the name variables that actually
 occur in the interface.  For unit identities which occur from
 interface files, this precondition is already fulfilled; however,
@@ -393,9 +392,9 @@ upheld (it is called by ``checkUnitId`` and ``instantiateSignature``).
 
 Note that renaming on ``ModIface`` is necessarily incomplete: top-level
 declarations in a ``ModIface`` are identified only by ``OccName``
-and cannot be substituted. There is one last renaming step that occurs
-when typechecking the interface (to be discussed later) for handling
-these top level identifiers.
+and cannot be substituted (possible refactor opportunity here). There is
+one last renaming step that occurs when typechecking the interface (to
+be discussed later) for handling these top level identifiers.
 
 Given that interface typechecking must do renaming as well, why can't
 renaming be deferred to typechecking entirely?  Immediate renaming
@@ -404,11 +403,98 @@ where we must rename and merge interfaces with different instantiations
 prior to typechecking. This algorithm would be very confusing if we
 hadn't renamed by then.
 
-Typechecking interfaces (IfaceEnv)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
 Loading interfaces (LoadIface)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Interface renaming is a primitive used by the interface loader,
+which asks, given a module identifier, what is the corresponding
+``ModIface`` for it.
+``computeInterface`` is a new function that handles this logic.
+There are two primary code paths:
+
+* The module identifier is fully instantiated, in which case
+  (we hope) that there is a **pre-instantiated interface**
+  on the file system which we can just read directly.
+
+* The module identifier is partially instantiated (or not
+  instantiated at all), in which case we read out the
+  interface from the uninstantiated indefinite library,
+  and then rename it according to our instantiation:
+  an **on-the-fly interface**.
+
+Pre-instantiated interfaces are fairly uninteresting, but there is a
+**precondition for on-the-fly interface loading**.  To on-the-fly
+load an interface for module ``P:m``, the **free module variables**
+of ``P`` must be available, in the sense that there is a local
+up-to-date ``hi`` file for each of them in our current project;
+furthermore, ``P`` must be well-typed (in the sense that the
+implementation matches the required signatures).
+(There are more stringent requirements when we read signature interfaces
+from our dependencies, but that is not handled by ``loadIface``.)
+
+A big subtlety is what should occur when both the pre-instantiated
+interface *as well as* the instantiated on-the-fly interface are
+available.  The golden rule is this: **an on-the-fly interface may
+be replaced with the compiled interface, but not vice versa!**
+
+* If we are compiling a fully instantiated library, we *always*
+  use pre-instantiated interfaces which arose from compilation.
+
+* If we are typechecking an indefinite library, we should prefer
+  the compiled interface if possible.  In some situations, this
+  is mandatory.  Consider::
+
+    library p
+        signature A
+    library q
+        dependency p[A=<A>]
+        signature B
+    library a -- definite
+        module A
+    library r -- definite
+        dependency p[A=a:A]
+    library s
+        dependency q[A=a:A,B=<B>]
+        dependency r
+
+  Here, the modules defined in ``r``, a definite library, were compiled against
+  the pre-instantiated ``p[A=a:A]``.  Thus, according to the golden
+  rule, it would be wrong to use the on-the-fly instantiated module
+  (even though ``q`` was typechecked against just that!)
+
+(TODO: the current impl plays fast and loose by just checking if we
+can find the definite interface in the database at all, rather than if it
+is transitively depended upon by some of our definite dependencies.)
+
+(TODO: dictionary functions...)
+
+Beyond this, there are three other things of note in ``LoadIface``:
+
+1. If we are asked to load the interface for ``<M>`` (e.g., we are
+   looking up the ``TyThing`` for ``{M.T}``), where do we
+   look?  We should look in the local ``M.hi`` file for
+   this module variable!  ``loadInterface`` has a special case for
+   this.
+
+2. There is a new function, ``moduleFreeHolesPrecise`` computes the
+   *precise* free holes of a ``Module``.  This set is always a subset of
+   the free module variables of the ``UnitId`` of the ``Module``.  This
+   is used when computing the order we need to merge and typecheck
+   signatures (see Signature merging).  This information is cached
+   in ``eps_free_holes``.  ``loadInterface`` can't be used here because
+   we need to call this function prior to establishing the invariant
+   that all of the instantiating interfaces are loadable.
+
+3. There is a hack to avoid loading external signatures into the EPS,
+   the ``is_external_sig``.  Really, ``loadInterface`` shouldn't be
+   called on these at all (assert!), but recompilation checking does do
+   this on occasion: signatures from external packages need to be loaded
+   and their ABI hashes checked to see if we need to re-merge.  This
+   might be refactorable but probably not without adding another cache
+   to the EPS.
+
+Typechecking interfaces (IfaceEnv)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Signature merging (mergeSignatures in TcBackpack, typecheckIfacesForMerging in TcIface)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
