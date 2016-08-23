@@ -621,6 +621,30 @@ dependency in the following context::
 Once we merge signature ``H1``, ``T`` is refined to ``Int`` and
 we know the instantiation should succeed.
 
+The algorithm for how to check these is actually quite simple:
+
+1. First, we compute the dependency graph between the
+   required signatures of our library.  The edges of this
+   dependency graph are formed by adding an edge (1)
+   for every import in an ``hsig`` file to another
+   required signature, and (2) to every precise free module
+   variable of every signature that is to be merged into
+   the requirement.
+
+2. In topological order, merge these requirements.  Each
+   successive merge gives us a monotonically increasing sequence of sets
+   of typechecked requirements: for every dependency whose free module
+   variables were *not* a subset of this set previously but are now
+   is checked for well-typedness. (Fully instantiated dependencies
+   are checked for well-typedness before we typecheck any signatures.)
+
+We adopt a very simple retypechecking avoidance scheme: if
+any signature needs to be typechecked, we check all dependencies;
+otherwise we skip typechecking dependencies.  In the case that there
+are no signatures, we are dealing with a definite library, in which
+case we can assume that the dependencies have already been compiled
+(and are thus well-typed.)
+
 Recompilation checking (Desugar, MkIface)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
