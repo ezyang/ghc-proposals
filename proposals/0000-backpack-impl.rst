@@ -638,15 +638,26 @@ The algorithm for how to check these is actually quite simple:
    is checked for well-typedness. (Fully instantiated dependencies
    are checked for well-typedness before we typecheck any signatures.)
 
-We adopt a very simple retypechecking avoidance scheme: if
-any signature needs to be typechecked, we check all dependencies;
-otherwise we skip typechecking dependencies.  In the case that there
-are no signatures, we are dealing with a definite library, in which
-case we can assume that the dependencies have already been compiled
-(and are thus well-typed.)
+At the moment, there is no facility for retypechecking avoidance:
+you must always check if dependencies are well-typed. (We don't have
+a convenient place to say, "yes, this dependency is well-typed,
+and here's when you have to recheck it."
 
 Recompilation checking (Desugar, MkIface)
 ~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When must a signature be re-typechecked?
+
+* In an uninstantiated library, we must retypecheck a signature if
+  any of its imports change (same as before), OR any of the signatures
+  that are merged into it change.  A merged requirement dependency is
+  recorded using ``UsageMergedRequirement``.
+
+* In an instantiated library, we must retypecheck if (1) the instantiating
+  module for the signature changes, or (2) the uninstantatiated
+  signature we are checking against changed. (TODO: check we actually
+  implemented this; some of it is carry-over from prior to the newest
+  patchset.)
 
 Pretty-printing
 ~~~~~~~~~~~~~~~
@@ -672,21 +683,6 @@ closely with our ICFP'16 submission:
 * Module variables, if they would be qualified, are pretty
   printed as ``<m>``. (``pprModule`` in Module)
 
-Proposed Change
----------------
-
-Here you should describe in precise terms what the proposal seeks to change.
-This should cover several things,
-
-* define the grammar and semantics of any new syntactic constructs
-* define the interfaces for any new library interfaces
-* discuss how the change addresses the points raised in the Motivation section
-* discuss how the proposed approach might interact with existing features  
-
-Note, however, that this section need not (but may) describe details of the
-implementation of the feature. The proposal is merely intended to describe what
-the new feature is and how it should behave.
-
 Drawbacks
 ---------
 
@@ -696,8 +692,8 @@ complicating the language grammar, poor interactions with other features,
 Alternatives
 ------------
 
-Here is where you can describe possible variants to the approach described in
-the Proposed Change section.
+Alternative implementation designs have been recorded near their
+relevant sections.
 
 Unresolved Questions
 --------------------
