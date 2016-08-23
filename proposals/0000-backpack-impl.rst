@@ -611,7 +611,7 @@ necessity for this in the following example::
 Clearly, ``p[H1=<H1>,H2=h2impl:H2]`` should not be considered
 well-type, as there is no reason to believe that the abstract
 type ``T`` is actually an integer.  But if we consider this
-dependency in the following context:
+dependency in the following context::
 
     library q
         signature H1 where
