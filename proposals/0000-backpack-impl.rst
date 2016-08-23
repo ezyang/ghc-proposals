@@ -673,6 +673,21 @@ When must a signature be re-typechecked?
   implemented this; some of it is carry-over from prior to the newest
   patchset.)
 
+Packages
+~~~~~~~~
+
+Package flag handling
+
+Computing the requirements to merge in
+
+The bkp file format
+~~~~~~~~~~~~~~~~~~~
+
+Reverted legacy code
+~~~~~~~~~~~~~~~~~~~~
+
+RnEnv, Inst
+
 Pretty-printing
 ~~~~~~~~~~~~~~~
 
