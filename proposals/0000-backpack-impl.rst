@@ -206,14 +206,28 @@ Hashed unit identifiers
     simply use the ``Unique`` from the abbreviated unit identifier
     string.
 
-    However, a similar difficulty arises to deferred hashing: what
-    if we need to compare an abbreviated unit identifier with a full
-    one.  The solution is to always consult the package database
-    to promote instantiated unit identifiers into their hashed
-    representation, when a substitution over unit identifiers
-    is performed.  This substitution must be done even when
-    typechecking uninstantiated libraries, since a hashed unit
-    identifier may be mentioned by one of our definite dependencies.
+    A key question to answer is, when are we allowed to promote
+    a unit identifier into a hashed one?  We are only
+    allowed to do so IF there is an entry for the hashed unit
+    identifier in the installed library database; otherwise,
+    we would have a hashed unit id, but no way to compute (via
+    on the fly renaming) the interfaces we need!  (If the
+    actual interface is available, though, we can just go
+    ahead and use it.)
+
+    But there is another big risk: what if the instantiated
+    unit ID is not up-to-date?  So we need to record an ABI hash
+    and make sure that it's up-to-date.  (While we're at it,
+    let's fix the bug where ABI hash doesn't capture other
+    aspects of the package registration.)
+
+    Why can't we just always use the on-the-fly renaming when
+    we're typechecking an indefinite unit (i.e., never hash unit
+    identities in this case)?  We might violate the golden
+    rule of interface renaming.  Some of our interfaces may
+    be compiled against an actual instantiation, and if we
+    swap it out, there may not be enough entities for the
+    unfoldings. Disaster!
 
 Identity modules versus semantic modules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
