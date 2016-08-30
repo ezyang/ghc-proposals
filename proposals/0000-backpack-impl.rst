@@ -40,15 +40,12 @@ Before typechecking an uninstantiated library, we must fulfill
 the following precondition:
 
 * Every dependency on a definite library must be compiled
-  and registered in the installed
-  library database.
+  and registered in the installed library database.
 
-* Every dependency on an indefinite library (even if it is
-  fully instantiated) must be have been typechecked as a fully
-  uninstantiated library (we never typecheck partially instantiated
-  libraries; instead, their interfaces are computed on-the-fly) and
-  registered as an uninstantiated, indefinite library in the installed
-  library database.
+* Every dependency on an indefinite library must be have been
+  typechecked as a fully uninstantiated library (we can then
+  rename these interface on the fly) and registered as an
+  uninstantiated, indefinite library in the installed library database.
 
 Given that these hold, to typecheck an uninstantiated library GHC must
 first typecheck the signatures and dependencies.  This is a fairly major
@@ -506,6 +503,8 @@ good to work out.
 
 Signature merging (mergeSignatures in TcBackpack, typecheckIfacesForMerging in TcIface)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. image:: https://raw.githubusercontent.com/ezyang/ghc-proposals/backpack-impl/proposals/signature-merging.png
 
 Before reading this section, make sure you are familiar with
 GHC's use of `knot-tying <https://ghc.haskell.org/trac/ghc/wiki/Commentary/Compiler/TyingTheKnot>`_.
