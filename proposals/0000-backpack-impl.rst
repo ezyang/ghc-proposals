@@ -114,60 +114,22 @@ Compile instantiated dependencies on indefinite libraries?
     precondition, except that it could avoid renaming interfaces
     on the fly in some cases; thus, I opted for the weaker precondition.
 
+    There is a stronger version of this precondition, whereby any
+    transitively fully instantiated dependency must be compiled.
+    This *does* solve a problem whereby we may accidentally improve
+    to an out-of-date instantiation on the database.  We have
+    not levied this restriction at present.
+
 Identifiers (`Module <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/basicTypes/Module.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The core data types which represent unit identifiers and module
 identifiers in GHC have been adjusted to encode the extra structure
-imposed by Backpack::
+imposed by Backpack. See `Module` for the types and some important
+commentary:
 
-    newtype ComponentId = ComponentId FastString
-    type ShFreeHoles = UniqDSet ModuleName
-    data UnitId = UnitId {
-            unitIdFS          :: FastString,
-            unitIdKey         :: Unique,
-            unitIdComponentId :: ComponentId,
-            unitIdInsts       :: [(ModuleName, Module)],
-            unitIdFreeHoles   :: ShFreeHoles
-        }
-    data Module = Module {
-            moduleUnitId :: UnitId,
-            moduleName   :: ModuleName
-        }
-
-These types closely resemble their `semantic counterparts <https://github.com/ezyang/ghc-proposals/blob/backpack/proposals/0000-backpack.rst#identifiers>`_, except for one
-difference: there is no distinct ADT representing module variables.
-Instead, module variables are representing using a distinguished
-``hole`` unit identifier ``holeUnitId``.  This is mostly for backwards
-compatibility in GHC, as ``moduleUnitId`` is used pervasively throughout
-the compiler (and adding an extra case for module variables would
-necessarily make this function partial.)  Similarly, name variables
-``{m.n}`` are represented as ``<m>.n`` to avoid adding another case
-to the ``Name`` constructor.
-
-This punning requires some care when defining substitutions on
-module variables.  Module variables get two substituting functions
-which should not be called on ``nameModule`` (except in special
-circumstances involving signature merging)::
-
-    renameHoleModule :: ShHoleSubst -> Module -> Module
-    renameHoleUnitId :: ShHoleSusbt -> UnitId -> UnitId
-
-Some other things to note about the representation:
-
-* A string representation of a ``UnitId`` (``unitIdFS``) is needed to be
-  used for symbol names.  We generate this string representation by
-  recursively hashing the contents of a ``UnitId`` (the hashes of sub
-  ``UnitId``\s is hashed Merkel tree style):  this algorithm implemented
-  by ``hashUnitId``.
-
-* We also need a ``Unique`` (``unitIdKey``) to support fast equality.
-  We derive the ``Unique`` from the string representation
-  (``unitIdFS``).
-
-* We cache the free module variables (``unitIdFreeHoles``) since we
-  frequently need to consult this field, and would like to avoid
-  having to walk the entire ``UnitId`` structure to find it.
+    * ``Note [Representation of module/name variables]``
+    * ``Note [UnitId to HashedUnitId improvement]``
 
 Alternative designs:
 
@@ -178,138 +140,37 @@ Directly allocate uniques for unit identifiers
     (ala ``TrieMap``).  However, it's unclear if this would be a
     performance win.
 
-Defer hashing to Cabal
-    Cabal must also be able to hash a ``UnitId`` into a flat string,
-    which it uses for file system paths.  In the current implementation,
-    Cabal and GHC implement these hashing algorithms separately, so
-    there is not necessarily any correspondence between Cabal's hash
-    and GHC's hash.  An alternative design would be to request Cabal
-    to allocate a hash for every definite unit which it compiles
-    (e.g., through a flag ``-this-unit-id-hash``).  Occurrences of
-    unit identifiers in definite units in the installed unit database
-    would be obligated to also record this hash.
+Don't defer hashing to Cabal
+    In the present implementation, Cabal feeds in the hash of
+    a hashed unit id via the package database and ``-this-unit-id``.
 
-    Unfortunately, even under this scheme, Cabal's provided hash cannot be
-    used to allocate uniques for equality testing: what if we check
-    for equality between an identifier equipped with a hash, and one
-    without it?  See below for more on how to avoid this problem.
+    An alternate possibility which seems possible is for Cabal to not
+    feed in a hash, so that GHC always computes the hash.  This has the
+    attractive property that the hash of a ``UnitId`` would coincide
+    with ``HashedUnitId`` when the unit id is fully instantiated.  The
+    problem with this scheme is that GHC will proceed to allocate symbol
+    names for instantiated Backpack packages that have nothing to do
+    with the hash Cabal allocated for them.  Nor is it any good for
+    Cabal to read out the computed hash after the fact: Cabal needs to
+    know what the hash is a priori so that it can tell if something is
+    already installed to the database.
 
-Hashed unit identifiers
-    The current design represents ``UnitId``\s as a tree data structure
-    in all situations.  It would be nice to avoid loading these trees
-    into memory when they are not necessary, e.g., when compiling
-    a definite library (where we do not ever need to perform
-    substitutions over the unit identifier); in those cases, we
-    simply use the ``Unique`` from the abbreviated unit identifier
-    string.
-
-    A key question to answer is, when are we allowed to promote
-    a unit identifier into a hashed one?  We are only
-    allowed to do so IF there is an entry for the hashed unit
-    identifier in the installed library database; otherwise,
-    we would have a hashed unit id, but no way to compute (via
-    on the fly renaming) the interfaces we need!  (If the
-    actual interface is available, though, we can just go
-    ahead and use it.)
-
-    But there is another big risk: what if the instantiated
-    unit ID is not up-to-date?  So we need to record an ABI hash
-    and make sure that it's up-to-date.  (While we're at it,
-    let's fix the bug where ABI hash doesn't capture other
-    aspects of the package registration.)
-
-    Why can't we just always use the on-the-fly renaming when
-    we're typechecking an indefinite unit (i.e., never hash unit
-    identities in this case)?  We might violate the golden
-    rule of interface renaming.  Some of our interfaces may
-    be compiled against an actual instantiation, and if we
-    swap it out, there may not be enough entities for the
-    unfoldings. Disaster!
+    You *could* work around it by adding a query to GHC which, given
+    a unit id, prints out GHC's allocated hash (but ugh, then Cabal
+    needs to call to GHC before it has even configured the package).
+    You could also conspire for Cabal and GHC to use the same
+    hashing algorithm, so they always agree; this could lead to
+    unpleasant drift.
 
 Identity modules versus semantic modules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Suppose that we typecheck the signature file ``A.hsig``, inside the unit
-``p[A=<A>]``.  What is its *module identity*?  There are two possible
-ways to answer this question:
-
-1. We might say that its module identity is ``p[A=<A>]:A``, since
-   module identities for modules are computed by combining the
-   current unit identity with the name of the module.  Indeed,
-   this module identity uniquely *identifies* the ``A.hi`` produced
-   by typechecking ``A.hsig``, thus we call it the **identity module**.
-
-2. Alternately, we might say its module identity is ``<A>``, since
-   any entity ``T`` which is declared in this signature should be given
-   the original name ``<A>.T`` (recall that by punning, this is really
-   the name variable ``{A.T}``).  Since this identity is what would be
-   used to compute the original names of entities declared in the
-   signature, we call this the **semantic module**.
-
-A semantic module can be computed from an identity module by
-a process called **canonicalization** (``canonicalizeModule :: Module ->
-Module``).  This distinction influences GHC in the following ways:
-
-* In the desugarer and later phases of the compilation
-  pipeline, we can assume semantic and identity modules
-  are always the same, since we never compile signatures (to
-  appease the build system, we generate blank object files,
-  but this is done simply by building a blank stub C file.)
-
-* For any code that involves ``Name``\s, we obviously want
-  the semantic module when computing the name.  Examples
-  include ``lookupIfaceTop`` in IfaceEnv, ``mkIface`` and
-  ``addFingerprints`` in MkIface and ``tcLookupGlobal`` in
-  TcEnv.
-
-* When reading interfaces, we want the identity module to
-  identify the specific interface we want (such interfaces
-  should never be loaded into the EPS).  However, if a
-  hole module ``<A>`` is requested, we look for ``A.hi``
-  in the *current* unit being compiled.  (See LoadIface.)
-  Similarly, in ``RnNames`` we check for self-imports using
-  identity modules, to allow signatures to import their implementor.
+See ``Note [Identity versus semantic module]`` in ``TcRnTypes``.
 
 Name substitutions (`NameShape <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/backpack/NameShape.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~
 
-When we write a declaration in a signature, e.g., ``data T``, we
-ascribe to it a **name variable**, e.g., ``{m.T}``.  This
-name variable may be substituted with an actual original
-name when the signature is implemented (or even if we
-merge the signature with one which reexports this entity
-from another module).
-
-When we instantiate a signature ``m`` with a module ``M``,
-we also need to substitute over names.  To do so, we must
-compute the **name substitution** induced by the *exports*
-of the module in question.  A ``NameShape`` represents
-such a name substitution for a single module instantiation.
-The "shape" in the name comes from the fact that the computation
-of a name substitution is essentially the *shaping pass* from
-Backpack'14, but in a far more restricted form.
-
-The name substitution for an export list is easy to explain.  If we are
-filling the module variable ``<m>``, given an export ``N`` of the form
-``M.n`` or ``{m'.n}`` (where ``n`` is an ``OccName``), the induced name
-substitution is from ``{m.n}`` to ``N``.  So, for example, if we have
-``A=impl:B``, and the exports of ``impl:B`` are ``impl:B.f`` and
-``impl:C.g``, then our name substitution is ``{A.f}`` to ``impl:B.f``
-and ``{A.g}`` to ``impl:C.g``.
-
-The name substitution oriented interface for ``NameShape`` looks
-like this::
-
-    emptyNameShape   :: ModuleName -> NameShpe
-    mkNameShape      :: ModuleName -> [AvailInfo] -> NameShape
-    substNameShape   :: NameShape -> Name -> Name
-
-``mkNameShape req_name as`` says, create a name substitution on
-name variables ``{req_name.n}`` for all ``n``, according to the
-exports ``as``.
-
-There is a bit more in ``NameShape`` about merging name shapes,
-but we will come back to that when we discuss signature merging.
+See NameShape.
 
 Interface renaming (`RnModIface <https://github.com/ezyang/ghc/blob/ghc-backpack/compiler/backpack/RnModIface.hs>`_)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
