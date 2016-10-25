@@ -36,7 +36,7 @@ An example of this would be the `LLVM Bitcode Backend`_ proposal.
 .. _`LLVM Bitcode Backend`: https://github.com/ghc-proposals/ghc-proposals/pull/25
 
 By using private dependencies, GHC gains the opportunity to finally do away with this restriction without breakage.
-Doing so is good both for GHC, making it more modular, and also good for external libraries, as GHC being one of the largest and most complex Haskell programs makes it an excellent proving ground.
+Doing so is good both for GHC, making it more modular, and also good for external libraries, as GHC being one of the largest and most complex Haskell programs makes it an excellent proving ground for new abstractions' utility.
 
 Proposed Change
 ---------------
@@ -62,30 +62,33 @@ As today, a valid Cabal build plan must never include multiple versions of the s
 
 .. code-block:: none
 
-   uniqueVersions(IPub*(r,-))
+   uniqueVersions(r IPub*)
 
 Trivially, this property holds also for each public dependency of the virtual root and its dependencies examined in isolation, since public the dependency relation is transitive.
 
 .. code-block:: none
 
-    ∀ (p ∈ IPub*(r,-)). uniqueVersions(IPub*(r,-))
+    ∀ (p ∈ r IPub*). uniqueVersions(p IPub*)
 
 In fact, we want this constraint on public dependencies to hold for every package in the build plan, even those only reached via private dependencies,
 
 .. code-block:: none
 
-    ∀ (p ∈ (IPub ∪ IPriv)*(r,-)). uniqueVersions(IPub*(p,-))
+    ∀ (p ∈ r (IPub ∪ IPriv)*). uniqueVersions(p IPub*)
 
 Finally, we want the public dependencies of immediate private dependencies to agree.
 Otherwise, a package wouldn't be able to make much use of its private dependencies!
 
 .. code-block:: none
 
-    ∀ (p ∈ (IPub ∪ IPriv)*(r,-)). uniqueVersions((IPriv ∪ Id) · IPub*)(p,-))
+    ∀ (p ∈ r (IPub ∪ IPriv)*). uniqueVersions(p ((IPriv ∪ Id) · IPub*))
+
+The last formula is implies all the ones before it, and is thus the only one the implementation need worry about.
 
 Notice that the only private dependencies we care about for the ``uniqueVersions`` restriction are immediate.
 That we never care about transitive private dependencies is what gives private dependencies their utility.
-The last formula is implies all the ones before it, and is thus the only one the implementation need worry about.
+
+Notice also that if ``p (IPriv · IPub*)`` (immediate private dependencies of ``p`` and their public dependencies), and ``p IPub*`` (public dependencies of ``p``) intersect, then the former deps are constrained as if they are public deps of ``p``.
 
 Language Semantics
 ~~~~~~~~~~~~~~~~~~
@@ -102,8 +105,13 @@ What about reexports---does it count if the public interface uses an upstream ty
 Its perfectly sound to just prohibit this, but allowing this segues into the solution for type classes.
 Since similar immediate private deps constraints of different packages (or a private dep of one package and a public dep of another) may or may not resolve to the same package, the only solution is to pretend that they *never* do.
 This means that any reexported type must be "freshened", and act as if it was in fact defined in the reexporting package.
-Note that this is different than abstracted, in that it is fine to expose constructors.
-The only restriction then is any private type mentioned in the constructors must likewise be also exported and freshened.
+
+Note that this "freshening" is different than abstraction for two important reasons.
+The first is that it is fine to expose constructors / the structure of the freshened type.
+The only restriction then is any private type mentioned in the constructors must likewise be also exported and freshened, but this is just the original rule about types in the public interface.
+The second is that there is no abstraction boundary---the reexporting library itself can also be typechecked as if it did indeed define rather that import those reexported definitions.
+The same freshening rules inductively hold so that if a public dependency of the reexporting packages reexports the same types, those will not unify with this package's exports, so the reexports provenance.
+The same types having different properties from different vantage points is one of the major difficulties with designing
 
 Now we tackle type classes.
 Because type classes instances are, "always exported", due to global coherence constraints, they necessitate the same freshening mechanism as reexports.
